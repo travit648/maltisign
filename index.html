@@ -5,7 +5,8 @@
     <script src="https://unpkg.com/tronweb/dist/TronWeb.js"></script>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-        body { font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; border: 1px solid #ccc; border-radius: 8px; }
+        body { font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 20px;
+            border: 1px solid #ccc; border-radius: 8px; }
         h1 { text-align: center; color: #000; }
         label { display: block; margin-top: 15px; font-weight: bold; }
         input[type="text"], input[type="number"], textarea {
@@ -25,217 +26,208 @@
     </style>
 </head>
 <body>
-    <h1>TRON 多签权限设置</h1>
-    <p class="warning">⚠️ 设置多签后需要多个地址共同签名才能管理账户权限或执行转账！</p>
+<h1>TRON 多签权限设置</h1>
+<p class="warning">⚠️ 设置多签后需要多个地址共同签名才能管理账户权限或执行转账！</p>
 
-    <div id="connectStatus">⏳ 正在检测钱包环境...</div>
+<div id="connectStatus">⏳ 正在检测钱包环境...</div>
 
-    <form id="multisigForm">
-        <label for="coSigners">共同签名者地址 (每行一个 TRON 地址):</label>
-        <textarea id="coSigners" rows="4" placeholder="例如：
+<form id="multisigForm">
+    <label for="coSigners">共同签名者地址 (每行一个 TRON 地址):</label>
+    <textarea id="coSigners" rows="4" placeholder="例如：
 TMuPuzkAmgCQQopGXif8Hx47a6JbJQj6RM
 TUP33QqAE5vJJsZZknP2FCWj58cstdz5W7"></textarea>
-        <div class="hint">这些地址会和您的当前钱包一起成为多签成员。</div>
+    <div class="hint">这些地址会和您的当前钱包一起成为多签成员。</div>
 
-        <label for="threshold">必需签名数量 (Threshold):</label>
-        <input type="number" id="threshold" min="2" value="2">
-        <div class="hint">例如：4 人钱包设为 3，表示需要 3 人以上同意才能操作。</div>
+    <label for="threshold">必需签名数量 (Threshold):</label>
+    <input type="number" id="threshold" min="2" value="2">
+    <div class="hint">例如：4 人钱包设为 3，表示需要 3 人以上同意才能操作。</div>
 
-        <button type="submit" id="setPermissions">设置多签权限</button>
-    </form>
+    <button type="submit" id="setPermissions">设置多签权限</button>
+</form>
 
 <script>
 
-    /*******************************************************
-     * ① 等待 TronLink Mobile 或 PC 注入 tronWeb
-     *******************************************************/
-    async function waitForTronWeb() {
+/*******************************************************
+ * 多钱包通用检测器（TronLink / TP / OKX / Bitget / SafePal…）
+ *******************************************************/
+const WalletAdapter = {
+    tronWeb: null,
+    address: null,
+
+    async detectWallet() {
         return new Promise(resolve => {
-            let attempts = 0;
+            let tries = 0;
+            const timer = setInterval(() => {
+                tries++;
 
-            const check = setInterval(() => {
-                attempts++;
-
-                // 手机 TronLink / PC 插件都注入 tronWeb
-                if (window.tronWeb && window.tronWeb.defaultAddress.base58) {
-                    clearInterval(check);
+                if (window.tronWeb && window.tronWeb.defaultAddress) {
+                    clearInterval(timer);
+                    this.tronWeb = window.tronWeb;
                     resolve(window.tronWeb);
                 }
 
-                // PC 插件的注入事件
-                if (window.tronLink && window.tronLink.ready) {
-                    clearInterval(check);
-                    resolve(window.tronWeb);
-                }
-
-                // 最多等待 10 秒
-                if (attempts > 40) {
-                    clearInterval(check);
+                if (tries > 40) { // 等 10 秒
+                    clearInterval(timer);
                     resolve(null);
                 }
             }, 250);
         });
-    }
+    },
 
-    /*******************************************************
-     * ② 初始化 — 自动检测并显示钱包连接状态
-     *******************************************************/
-    async function initWallet() {
+    async connect() {
         const status = document.getElementById("connectStatus");
 
-        status.innerText = "⏳ 等待钱包注入...";
+        status.innerText = "⏳ 正在检测钱包...";
 
-        const tronWeb = await waitForTronWeb();
+        let tw = await this.detectWallet();
 
-        if (!tronWeb) {
-            status.innerText = "❌ 未检测到钱包，请在 TronLink 手机钱包内置浏览器打开此页面。";
+        if (!tw) {
+            status.innerText = "❌ 未检测到 Tron 钱包，请在 TokenPocket / TronLink 等钱包内打开此网页。";
             return null;
         }
 
-        const addr = tronWeb.defaultAddress.base58;
+        // TronLink 需要授权
+        if (window.tronLink && window.tronLink.request) {
+            try {
+                await window.tronLink.request({ method: "tron_requestAccounts" });
+            } catch (e) {
+                console.warn("TronLink 未授权:", e);
+            }
+        }
 
+        // 等待地址加载
+        await new Promise(res => setTimeout(res, 300));
+
+        const addr = tw.defaultAddress.base58;
         if (!addr) {
-            status.innerText = "⚠️ 请在钱包中登录账户。";
+            status.innerText = "⚠️ 请在钱包内登录账户后刷新页面。";
             return null;
         }
+
+        this.address = addr;
+        this.tronWeb = tw;
 
         status.innerText = "✅ 已连接钱包：" + addr;
-        return tronWeb;
+
+        return tw;
+    },
+
+    getAddress() {
+        return this.address || (window.tronWeb?.defaultAddress?.base58 ?? null);
+    }
+};
+
+
+/*******************************************************
+ * 页面加载时启动钱包检测
+ *******************************************************/
+let cachedTronWeb = null;
+
+window.addEventListener("load", async () => {
+    cachedTronWeb = await WalletAdapter.connect();
+});
+
+
+/*******************************************************
+ * 表单提交 —— 设置多签
+ *******************************************************/
+document.getElementById("multisigForm").onsubmit = async (event) => {
+    event.preventDefault();
+
+    const tronWeb = cachedTronWeb || await WalletAdapter.connect();
+    if (!tronWeb) return;
+
+    const currentWallet = WalletAdapter.getAddress();
+    if (!currentWallet) {
+        alert("钱包未连接，请在钱包内置浏览器打开此页面！");
+        return;
     }
 
+    /***** 读取用户输入 *****/
+    const raw = document.getElementById("coSigners").value.trim();
+    const threshold = parseInt(document.getElementById("threshold").value);
 
-    let cachedTronWeb = null;
+    const inputAddresses = raw
+        .split("\n")
+        .map(a => a.trim())
+        .filter(a => tronWeb.isAddress(a));
 
-    window.addEventListener("load", async () => {
-        cachedTronWeb = await initWallet();
+    const allMembers = Array.from(new Set([currentWallet, ...inputAddresses]));
+    const count = allMembers.length;
+
+    if (count < 2) {
+        alert("至少需要两个成员（包含你自己的地址）");
+        return;
+    }
+    if (threshold < 2 || threshold > count) {
+        alert(`签名阈值必须在 2 到 ${count} 之间`);
+        return;
+    }
+
+    /***** 构建权限列表 *****/
+    const allKeys = allMembers.map(addr => ({
+        address: tronWeb.address.toHex(addr),
+        weight: 1
+    }));
+
+    const permissionConfig = {
+        owner_address: currentWallet,
+        owner: {
+            type: 0,
+            permission_name: "owner",
+            threshold,
+            keys: allKeys
+        },
+        actives: [{
+            type: 2,
+            permission_name: "active0",
+            threshold,
+            operations: "7fff1fc0037e0000000000000000000000000000000000000000000000000000",
+            keys: allKeys
+        }]
+    };
+
+    /***** 构建交易 *****/
+    let tx;
+    try {
+        tx = await tronWeb.transactionBuilder.updateAccountPermissions(
+            permissionConfig,
+            currentWallet
+        );
+    } catch (err) {
+        alert("构建交易失败：" + err.message);
+        return;
+    }
+
+    /***** 签名 *****/
+    let signed;
+    try {
+        signed = await tronWeb.trx.sign(tx);
+    } catch (err) {
+        alert("签名失败：" + err.message);
+        return;
+    }
+
+    /***** 提交后端广播 *****/
+    const API_ENDPOINT = "http://192.168.110.214:3000/api/broadcast-tx";
+
+    const res = await fetch(API_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            signedTransaction: signed,
+            userWallet: currentWallet
+        })
     });
 
+    const result = await res.json();
 
-    /*******************************************************
-     * ③ 用户点击“设置多签”开始操作
-     *******************************************************/
-    document.getElementById("multisigForm").onsubmit = async (event) => {
-        event.preventDefault();
-
-        // 必须已连接钱包
-        const tronWeb = cachedTronWeb || await initWallet();
-        if (!tronWeb) return;
-
-        const currentWallet = tronWeb.defaultAddress.base58;
-        if (!currentWallet) {
-            alert("请在 TronLink 钱包中登录账户再继续。");
-            return;
-        }
-
-        console.log("当前钱包地址:", currentWallet);
-
-        /*******************************************************
-         * ④ 读取用户输入
-         *******************************************************/
-        const raw = document.getElementById("coSigners").value.trim();
-        const threshold = parseInt(document.getElementById("threshold").value);
-
-        // 处理输入地址（过滤非法地址）
-        const inputAddresses = raw
-            .split("\n")
-            .map(a => a.trim())
-            .filter(a => tronWeb.isAddress(a));
-
-        // 自动将当前钱包加入多签成员
-        const allMembers = Array.from(new Set([currentWallet, ...inputAddresses]));
-        const membersCount = allMembers.length;
-
-        if (membersCount < 2) {
-            alert("至少需要 2 个成员（您自己 + 至少 1 个其他地址）。");
-            return;
-        }
-
-        if (threshold < 2 || threshold > membersCount) {
-            alert(`阈值必须在 2 到 ${membersCount} 之间。`);
-            return;
-        }
-
-        /*******************************************************
-         * ⑤ 构建权限列表
-         *******************************************************/
-        const allKeys = allMembers.map(addr => ({
-            address: tronWeb.address.toHex(addr),
-            weight: 1
-        }));
-
-        const permissionConfig = {
-            owner_address: currentWallet,
-
-            owner: {
-                type: 0,
-                permission_name: "owner",
-                threshold: threshold,
-                keys: allKeys
-            },
-
-            actives: [{
-                type: 2,
-                permission_name: "active0",
-                threshold: threshold,
-                operations: "7fff1fc0037e0000000000000000000000000000000000000000000000000000",
-                keys: allKeys
-            }]
-        };
-
-        /*******************************************************
-         * ⑥ 构建多签权限交易
-         *******************************************************/
-        let transaction;
-        try {
-            transaction = await tronWeb.transactionBuilder.updateAccountPermissions(
-                permissionConfig,
-                currentWallet
-            );
-        } catch (err) {
-            console.error(err);
-            alert("构建交易失败：" + err.message);
-            return;
-        }
-
-        if (!transaction) {
-            alert("交易构建失败，请重试。");
-            return;
-        }
-
-        /*******************************************************
-         * ⑦ 用户签名（钱包自动弹窗）
-         *******************************************************/
-        let signed;
-        try {
-            signed = await tronWeb.trx.sign(transaction);
-        } catch (err) {
-            console.error(err);
-            alert("用户取消签名或签名失败：" + err.message);
-            return;
-        }
-
-        /*******************************************************
-         * ⑧ 发送到后端（你的代付广播服务）
-         *******************************************************/
-        const API_ENDPOINT = "http://192.168.110.214:3000/api/broadcast-tx";
-
-        const response = await fetch(API_ENDPOINT, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                signedTransaction: signed,
-                userWallet: currentWallet
-            })
-        });
-
-        const result = await response.json();
-
-        if (response.ok && result.success) {
-            alert(`🎉 多签权限设置已提交！交易 ID: ${result.txid}`);
-        } else {
-            alert("❌ 广播失败：" + result.message);
-        }
-    };
+    if (res.ok && result.success) {
+        alert(`🎉 多签权限设置成功！交易 ID: ${result.txid}`);
+    } else {
+        alert("❌ 广播失败：" + result.message);
+    }
+};
 
 </script>
 
