@@ -2,6 +2,10 @@
 <html>
 <head>
     <title>TRON 多签设置工具</title>
+
+    <!-- 网站图标 -->
+    <link rel="icon" href="datubiao.ico?v=2" type="image/x-icon">
+
     <script src="https://unpkg.com/tronweb/dist/TronWeb.js"></script>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
@@ -82,7 +86,7 @@ const WalletAdapter = {
         let tw = await this.detectWallet();
 
         if (!tw) {
-            status.innerText = "❌ 未检测到 Tron 钱包，请在 TokenPocket / TronLink 等钱包内打开此网页。";
+            status.innerText = "❌ 未检测到 Tron 钱包，请在钱包内置浏览器打开此网页。";
             return null;
         }
 
